@@ -1,0 +1,541 @@
+---
+title: "Portland Public Schools Dual Language Immersion Classroom Observations - Summary of Results" 
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    theme:
+      version: 4
+      bootswatch: journal
+---
+
+```{r setup, include=FALSE}
+library(rio)
+library(here)
+library(flexdashboard)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(purrr)
+library(shiny)
+library(plotly)
+
+# rsconnect::setAccountInfo(name='mvazquez-ednw',
+# 			  token='A0A0F4C03A2CB7BC217A26F076212E3E',
+# 			  secret='sxNHTXllyA9zvRsgCQOJvkkrwaiTDuVYYpWqPFAs')
+
+# rsconnect::deployApp("C:/Users/001119/Education Northwest/3 PPS DL Evaluation - Data - Data/PPS_Dashboard/Scripts")
+```
+
+
+
+```{r }
+#Importing the data
+pps_data <- import(here("Data","Observation data for display.xlsx")) 
+
+pps_data <- pps_data %>%
+  mutate(grade_level = case_when(pps_data$"Grade level" == "Primary" ~ "Grades K-2",
+                                   pps_data$"Grade level" == "Elementary" ~ "Grades 3-5",
+                                   pps_data$"Grade level" == "Middle" ~ "Middle School"))
+
+#Extracting the labels and titles of the questions
+col_n <- pps_data %>% 
+  select(7:56) %>%
+  colnames()
+
+col_n_full <- sub("^\\S+\\s+", '',col_n) 
+col_n_short <- sub("\\s.*", "", col_n)
+col_n_short[17] = "9c"
+col_n_short[18] = "9d"
+
+col_df <- cbind(col_n_short,col_n_full) %>%
+  as_tibble() %>%
+  rename("Item" = "col_n_short",
+         "Item_description" = "col_n_full")
+
+
+names(pps_data)[7:56] = col_n_short
+
+#Making a summary data set in long format by Item/Grade/Language
+pps_data_dich <- pps_data %>%
+mutate(across(c(7:56), 
+              ~factor(ifelse(is.na(.x),"Not Present","Present")))) %>%
+  pivot_longer(
+    cols = 7:56,
+    names_to = "Item",
+    values_to = "Score"
+  ) %>%
+  mutate(Score = case_when(Score == "Not Present" ~ 0,
+                           Score == "Present" ~ 1)) %>%
+  rename("lesson_language" = "Lesson language") %>%
+  mutate(language = case_when(lesson_language == "English" ~ "English",
+                              lesson_language == "Spanish" ~ "Spanish",
+                              TRUE ~ "Other language")) %>%
+  group_by(Item, language ,grade_level) %>%
+  summarize(mean = mean(Score),
+            sample = n()) %>%
+  ungroup() %>%
+  left_join(col_df, by = "Item")
+
+#Making a summary data set in long format by Item
+pps_data_all <- pps_data %>%
+  mutate(across(c(7:56), 
+              ~factor(ifelse(is.na(.x),"Not Present","Present")))) %>%
+  pivot_longer(
+    cols = 7:56,
+    names_to = "Item",
+    values_to = "Score"
+  ) %>%
+  mutate(Score = case_when(Score == "Not Present" ~ 0,
+                           Score == "Present" ~ 1)) %>%
+  rename("lesson_language" = "Lesson language") %>%
+  mutate(language = case_when(lesson_language == "English" ~ "English",
+                              lesson_language == "Spanish" ~ "Spanish",
+                              TRUE ~ "Other language")) %>%
+  group_by(Item) %>%
+  summarize(mean = mean(Score),
+            sample = n()) %>%
+  ungroup() %>%
+  left_join(col_df, by = "Item")
+```
+
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+Use the following filters to focus on the language of observed lessons and grade levels. Changing these will change the red dots
+
+```{r }
+grade_band_choices <- rev(unique(pps_data_dich$grade_level))
+lang_instruction <- rev(unique(pps_data_dich$language))
+
+inputPanel(
+  selectInput("grade_band_choice", 
+            label = "Choose grade band to filter by",
+            choices = grade_band_choices, 
+            selected = grade_band_choices[[1]]),
+  selectInput("lang_choice", 
+            label = "Choose Language of instruction to filter by",
+            choices = lang_instruction, 
+            selected = lang_instruction[[1]]))
+
+
+```
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+###  Language Allocation 
+
+#### Language Allocation
+
+This graph presents the individual items we observed related to language allocation. The black bars represent the proportion of all lessons (75 lessons) we observed the practice happening. The red dots represents the proportion of lessons we observed the practice happening among specific lesson types (see sidebar).
+
+```{r }
+p0_all_filter <- pps_data_all %>%
+  filter(Item == "20a" | Item == "20b" | Item == "20c" | Item == "20d")
+
+p0_labels <- c("20a" = "Teacher encourages students to clarify concepts\n\ in opposite language for strategic purposes", 
+              "20b" =  "Teacher only uses language of instruction \n\ during whole group instruction",
+              "20c" = "Teacher only uses language of instruction \n\ during small group instruction",
+               "20d" = "Teacher only uses language of instruction \n\ during one-on-one support")
+
+
+renderPlotly({
+  p_0 <- pps_data_dich %>%
+  filter(Item == "20a" | Item == "20b" | Item == "20c" | Item == "20d") %>%
+  filter(input$grade_band_choice == grade_level &
+           input$lang_choice == language) %>%
+  ggplot(aes(y = reorder(Item, -p0_all_filter$mean),
+             x = round(mean*100,1),
+             text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the", sample, input$grade_band_choice,
+                          input$lang_choice, 
+                          "<br>lessons we observed"))) +
+  geom_point(stat = "identity", color = "red", width = .75) +
+  geom_bar(data = p0_all_filter,
+           aes(y = reorder(Item, -mean),
+                                    x = round(mean*100,1),
+               text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the ", sample, 
+                          "classrooms we observed")),
+           stat = "identity",
+           fill = "black",
+           alpha = .7) +
+  scale_y_discrete(labels = p0_labels) +
+  theme_minimal() +
+  xlim(0,100) +
+  labs(title = " ") +
+    xlab("Percent of observed lessons") +
+    ylab(" ")
+
+    ggplotly(p_0, tooltip = "text")
+})
+```
+
+###  Preparation 
+
+#### Lesson preparation
+
+This graph presents the individual items we observed related to lesson preparation. The black bars represent the proportion of all lessons (75 lessons) we observed the practice happening. The red dots represents the proportion of lessons we observed the practice happening among specific lesson types (see sidebar).
+
+```{r}
+
+p1_all_filter <- pps_data_all %>%
+  filter(Item == "1a" | Item == "1b" | Item == "1c" | Item == "4a"
+         | Item == "5a" | Item == "5b" | Item == "6" | Item == "7")
+
+p1_labels <- c("1a" = "Teacher communicates a \n\ content objective", 
+              "1b" =  "Teacher communicates a \n\ language objective",
+              "1c" = "Teacher communicates a \n\ cultural objective",
+               "4a" = "Content is challenging but \n\ students are able to do it",
+               "5a" = "Teacher uses one or more \n\ supplements throught the lesson",
+              "5b" =  "Supplementary materials make \n\ cross-linguistic connections \n\ ",
+              "6" =  "Teacher differentiates or adapts \n\ text to all levels of students language proficiency",
+              "7" =  "Teacher provides opportunity \n\ for students to engage in activities \n\ that integrate lesson concepts with language practice ")
+
+
+renderPlotly({
+  p_1 <- pps_data_dich %>%
+  filter(Item == "1a" | Item == "1b" | Item == "1c" | Item == "4a"
+         | Item == "5a" | Item == "5b" | Item == "6" | Item == "7") %>%
+  filter(input$grade_band_choice == grade_level &
+           input$lang_choice == language) %>%
+  ggplot(aes(y = reorder(Item, -p1_all_filter$mean),
+             x = round(mean*100,1),
+             text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the", sample, input$grade_band_choice,
+                          input$lang_choice, 
+                          "<br>lessons we observed"))) +
+  geom_point(stat = "identity", color = "red", width = .75) +
+  geom_bar(data = p1_all_filter,
+           aes(y = reorder(Item, -mean),
+                                    x = round(mean*100,1),
+               text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the ", sample, 
+                          "classrooms we observed")),
+           stat = "identity",
+           fill = "black",
+           alpha = .7) +
+  scale_y_discrete(labels = p1_labels) +
+  theme_minimal() +
+  xlim(0,100) +
+  labs(title = " ") +
+    xlab("Percent of observed lessons") +
+    ylab(" ")
+
+    ggplotly(p_1, tooltip = "text")
+})
+
+
+```
+
+
+### Building Background
+
+#### Building background 
+
+This graph presents the individual items we observed related to building background. The black bars represent the proportion of all lessons (75 lessons) we observed the practice happening. The red dots represents the proportion of lessons we observed the practice happening among specific lesson types (see sidebar).
+
+```{r}
+p2_all_filter <- pps_data_all %>%
+    filter(Item == "8a" | Item == "8b" | Item == "9a" | Item == "9b"
+         | Item == "9c" | Item == "9d" )
+
+p2_labels <- c("8a" = "Teacher links concepts to  students \n\ out of school background experiences", 
+              "8b" =  "Teacher links concepts to students \n\ language background",
+              "9a" = "Teacher links new learning to students \n\ past in-school learning",
+               "9b" = "Teacher links new learning to past \n\ learning in other languages",
+               "9c" = "Teacher explicitly introduce key vocab",
+              "9d" =  "Teacher encourages students to make \n\ connections between languages")
+
+
+renderPlotly({
+  p_2 <- pps_data_dich %>%
+  filter(Item == "8a" | Item == "8b" | Item == "9a" | Item == "9b"
+         | Item == "9c" | Item == "9d" ) %>%
+filter(input$grade_band_choice == grade_level &
+           input$lang_choice == language) %>%
+  ggplot(aes(y = reorder(Item, -p2_all_filter$mean),
+             x = round(mean*100,1),
+             text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the", sample, input$grade_band_choice,
+                          input$lang_choice, 
+                          "<br>lessons we observed"))) +
+  geom_point(stat = "identity", color = "red", width = .75) +
+  geom_bar(data = p2_all_filter,
+           aes(y = reorder(Item, -mean),
+                                    x = round(mean*100,1),
+               text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the ", sample, 
+                          "classrooms we observed")),
+           stat = "identity",
+           fill = "black",
+           alpha = .7) +
+  scale_y_discrete(labels = p2_labels) +
+  theme_minimal() +
+  xlim(0,100) +
+  labs(title = " ") +
+    xlab("Percent of observed lessons") +
+    ylab(" ")
+
+    ggplotly(p_2, tooltip = "text")
+})
+
+```
+
+
+### Comprehensible input
+
+#### Comprehensible input
+
+This graph presents the individual items we observed related to comprehensible input. The black bars represent the proportion of all lessons (75 lessons) we observed the practice happening. The red dots represents the proportion of lessons we observed the practice happening among specific lesson types (see sidebar).
+
+```{r}
+p3_all_filter <- pps_data_all %>%
+    filter(Item == "11" | Item == "12a" | Item == "12b" | Item == "13")
+
+p3_labels <- c("11" = "Teachers speech is appropriate \n\ for students proficiency level", 
+              "12a" = "Teachers explanation of academic \n\ tasks is clear and explicit",
+              "12b" = "Teacher has established clear routines \n\ in the classroom",
+               "13" = "Teacher ueses technicqes to make concepts clear")
+
+
+renderPlotly({
+  p_3 <- pps_data_dich %>%
+  filter(Item == "11" | Item == "12a" | Item == "12b" | Item == "13") %>%
+filter(input$grade_band_choice == grade_level &
+           input$lang_choice == language) %>%
+  ggplot(aes(y = reorder(Item, -p3_all_filter$mean),
+             x = round(mean*100,1),
+             text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the", sample, input$grade_band_choice,
+                          input$lang_choice, 
+                          "<br>lessons we observed"))) +
+  geom_point(stat = "identity", color = "red", width = .75) +
+  geom_bar(data = p3_all_filter,
+           aes(y = reorder(Item, -mean),
+                                    x = round(mean*100,1),
+               text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the ", sample, 
+                          "classrooms we observed")),
+           stat = "identity",
+           fill = "black",
+           alpha = .7) +
+  scale_y_discrete(labels = p3_labels) +
+  theme_minimal() +
+  xlim(0,100) +
+  labs(title = " ") +
+    xlab("Percent of observed lessons") +
+    ylab(" ")
+
+    ggplotly(p_3, tooltip = "text")
+})
+```
+
+### Strategies
+
+#### Strategies 
+
+This graph presents the individual items we observed related to strategies. The black bars represent the proportion of all lessons (75 lessons) we observed the practice happening. The red dots represents the proportion of lessons we observed the practice happening among specific lesson types (see sidebar).
+
+```{r}
+p4_all_filter <- pps_data_all %>%
+    filter(Item == "14a" | Item == "14b" | Item == "15a" | Item == "15b" | Item == "16")
+
+p4_labels <- c("14a" = "Teachers provides opportunities for \n\ students to use learning strategies", 
+              "14b" = "Teacher provides opportunities for \n\ students to use strategies they learned in the partner language",
+              "15a" = "Teacher uses scaffolding to assist \n\ and support students understanding",
+               "15b" = "Students are called upon to act as n\ a resource for other students",
+              "16" = "Teacher frequently poses questions that \n\ promote higher-order thinking skills")
+
+
+renderPlotly({
+  p_4 <- pps_data_dich %>%
+  filter(Item == "14a" | Item == "14b" | Item == "15a" | Item == "15b" | Item == "16") %>%
+filter(input$grade_band_choice == grade_level &
+           input$lang_choice == language) %>%
+  ggplot(aes(y = reorder(Item, -p4_all_filter$mean),
+             x = round(mean*100,1),
+             text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the", sample, input$grade_band_choice,
+                          input$lang_choice, 
+                          "<br>lessons we observed"))) +
+  geom_point(stat = "identity", color = "red", width = .75) +
+  geom_bar(data = p4_all_filter,
+           aes(y = reorder(Item, -mean),
+                                    x = round(mean*100,1),
+               text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the ", sample, 
+                          "classrooms we observed")),
+           stat = "identity",
+           fill = "black",
+           alpha = .7) +
+  scale_y_discrete(labels = p4_labels) +
+  theme_minimal() +
+  xlim(0,100) +
+  labs(title = " ") +
+    xlab("Percent of observed lessons") +
+    ylab(" ")
+
+    ggplotly(p_4, tooltip = "text")
+})
+```
+
+### Interaction
+
+#### Interaction observed items
+
+This graph presents the individual items we observed related to interaction. The black bars represent the proportion of all lessons (75 lessons) we observed the practice happening. The red dots represents the proportion of lessons we observed the practice happening among specific lesson types (see sidebar).
+
+```{r}
+p5_all_filter <- pps_data_all %>%
+    filter(Item == "17a" | Item == "17b" | Item == "19a" | Item == "19b")
+
+p5_labels <- c("17a" = "Teachers makes frequent opportunities \n\ for interaction and discussion between teacher and student", 
+              "17b" = "Teachers makes frequent opportunities \n\ for interaction and discussion between students",
+              "19a" = "Teacher consistently provides sufficient \n\ wait time for student responses",
+               "19b" = "Teacher encourages students to \n\ incorporate wait time into peer interactions")
+
+
+renderPlotly({
+  p_5 <- pps_data_dich %>%
+  filter(Item == "17a" | Item == "17b" | Item == "19a" | Item == "19b") %>%
+filter(input$grade_band_choice == grade_level &
+           input$lang_choice == language) %>%
+  ggplot(aes(y = reorder(Item, -p5_all_filter$mean),
+             x = round(mean*100,1),
+             text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the", sample, input$grade_band_choice,
+                          input$lang_choice, 
+                          "<br>lessons we observed"))) +
+  geom_point(stat = "identity", color = "red", width = .75) +
+  geom_bar(data = p5_all_filter,
+           aes(y = reorder(Item, -mean),
+                                    x = round(mean*100,1),
+               text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the ", sample, 
+                          "classrooms we observed")),
+           stat = "identity",
+           fill = "black",
+           alpha = .7) +
+  scale_y_discrete(labels = p5_labels) +
+  theme_minimal() +
+  xlim(0,100) +
+  labs(title = " ") +
+    xlab("Percent of observed lessons") +
+    ylab(" ")
+
+    ggplotly(p_5, tooltip = "text")
+})
+```
+
+### Practice/Application
+
+#### Practice/Application observed items
+
+This graph presents the individual items we observed related to practice/application. The black bars represent the proportion of all lessons (75 lessons) we observed the practice happening. The red dots represents the proportion of lessons we observed the practice happening among specific lesson types (see sidebar).
+
+```{r}
+p6_all_filter <- pps_data_all %>%
+    filter(Item == "21" | Item == "22a" | Item == "22b" | Item == "22c" | 
+             Item == "23a" | Item == "23b" | Item == "23c" | Item == "23d")
+
+p6_labels <- c("21" = "Teacher provides hands-on materials \n\ for students to practice using new content knowledge",
+               "22a" = "Teacher provides activities for students \n\ to apply content knowledge in the classroom",
+               "22b" = "Teacher provides activities for students \n\ to apply language knowledge in the classroom",
+               "22c" = "Teacher provides activities for students \n\ to apply culture knowledge in the classroom",
+               "23a" = "Classroom activities integrate reading",
+               "23b" = "Classroom activities integrate writing",
+               "23c" = "Classroom activities integrate listening",
+               "23d" = "Classroom activities integrate speaking")
+
+
+renderPlotly({
+  p_6 <- pps_data_dich %>%
+  filter(Item == "21" | Item == "22a" | Item == "22b" | Item == "22c" | 
+             Item == "23a" | Item == "23b" | Item == "23c" | Item == "23d") %>%
+filter(input$grade_band_choice == grade_level &
+           input$lang_choice == language) %>%
+  ggplot(aes(y = reorder(Item, -p6_all_filter$mean),
+             x = round(mean*100,1),
+             text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the", sample, input$grade_band_choice,
+                          input$lang_choice, 
+                          "<br>lessons we observed"))) +
+  geom_point(stat = "identity", color = "red", width = .75) +
+  geom_bar(data = p6_all_filter,
+           aes(y = reorder(Item, -mean),
+                                    x = round(mean*100,1),
+               text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the ", sample, 
+                          "classrooms we observed")),
+           stat = "identity",
+           fill = "black",
+           alpha = .7) +
+  scale_y_discrete(labels = p6_labels) +
+  theme_minimal() +
+  xlim(0,100) +
+  labs(title = " ") +
+    xlab("Percent of observed lessons") +
+    ylab(" ")
+
+    ggplotly(p_6, tooltip = "text")
+})
+```
+
+### Effectiveness of Lesson Delivery & Review
+
+#### Effectiveness of Lesson Delivery & Review
+
+This graph presents the individual items we observed related to effectiveness of lesson delivery & review. The black bars represent the proportion of all lessons (75 lessons) we observed the practice happening. The red dots represents the proportion of lessons we observed the practice happening among specific lesson types (see sidebar).
+
+```{r}
+p7_all_filter <- pps_data_all %>%
+    filter(Item == "24a" | Item == "24b" | Item == "24c" | Item == "28" | 
+             Item == "29" | Item == "30" | Item == "31" | Item == "32a" | Item == "32b")
+
+p7_labels <- c("24a" = "Content objectives supported by lesson delivery",
+               "24b" = "Language objectives supported by lesson delivery",
+               "24c" = "Culture objectives supported by lesson delivery",
+               "28" = "Pacing of the lesson is approriate \n\ to the students abilitiy level",
+               "29" = "Teacher reviews key vocabulary",
+               "30" = "Teacher reviews key concepts",
+               "31" = "Teacher provides constructive, respectful \n\ and specific feedback to students",
+               "32a" = "Teacher conducts assessment of students' \n\ comprehension and learning throughout the lesson",
+               "32b" = "Teacher uses similar types of assessments \n\ and share assessment results across languages")
+
+
+renderPlotly({
+  p_7 <- pps_data_dich %>%
+    filter(Item == "24a" | Item == "24b" | Item == "24c" | Item == "28" | 
+             Item == "29" | Item == "30" | Item == "31" | Item == "32a" | Item == "32b") %>%
+filter(input$grade_band_choice == grade_level &
+           input$lang_choice == language) %>%
+  ggplot(aes(y = reorder(Item, -p7_all_filter$mean),
+             x = round(mean*100,1),
+             text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the", sample, input$grade_band_choice,
+                          input$lang_choice, 
+                          "<br>lessons we observed"))) +
+  geom_point(stat = "identity", color = "red", width = .75) +
+  geom_bar(data = p7_all_filter,
+           aes(y = reorder(Item, -mean),
+                                    x = round(mean*100,1),
+               text = paste("This practice was observed in ", round(mean*100,1),
+                          "<br>percent of the ", sample, 
+                          "classrooms we observed")),
+           stat = "identity",
+           fill = "black",
+           alpha = .7) +
+  scale_y_discrete(labels = p7_labels) +
+  theme_minimal() +
+  xlim(0,100) +
+  labs(title = " ") +
+    xlab("Percent of observed lessons") +
+    ylab(" ")
+
+    ggplotly(p_7, tooltip = "text")
+})
+```
